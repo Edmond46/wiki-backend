@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iWiki 课程资源库智能检索</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --pri:#2563eb; --muted:#6b7280; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background:var(--bg); color:#111; }
+  header { background:#0f172a; color:#fff; padding:18px 28px; }
+  header h1 { margin:0; font-size:19px; font-weight:600; }
+  header p { margin:4px 0 0; font-size:12px; color:#94a3b8; }
+  .wrap { max-width:1080px; margin:0 auto; padding:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  input[type=text] { flex:1; min-width:220px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:14px; }
+  input[type=file] { font-size:13px; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--pri); color:#fff; cursor:pointer; font-size:14px; }
+  button.ghost { background:#eef2ff; color:var(--pri); }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tabs button { background:#eef2ff; color:var(--pri); }
+  .tabs button.on { background:var(--pri); color:#fff; }
+  .item { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .item .t { font-weight:600; font-size:14px; }
+  .item .m { font-size:12px; color:var(--muted); margin-top:2px; }
+  .item .s { font-size:13px; margin-top:6px; color:#374151; line-height:1.5; }
+  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:6px; background:#f1f5f9; color:#475569; margin-right:6px; }
+  .tag.k { background:#e0f2fe; color:#0369a1; }
+  .tag.s { background:#dcfce7; color:#15803d; }
+  .tag.both { background:#ede9fe; color:#6d28d9; }
+  .tag.err { background:#fee2e2; color:#b91c1c; }
+  .tag.empty { background:#fef3c7; color:#b45309; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .grid > div { min-width:0; }
+  h3 { font-size:14px; margin:0 0 10px; }
+  .hint { font-size:12px; color:var(--muted); }
+  .hot span { display:inline-block; background:#f1f5f9; border-radius:999px; padding:3px 10px; font-size:12px; margin:0 6px 6px 0; cursor:pointer; }
+  pre { font-size:12px; background:#0f172a; color:#e2e8f0; padding:10px; border-radius:8px; overflow:auto; }
+  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>iWiki 课程资源库智能检索</h1>
+  <p>MySQL 关键词检索（FULLTEXT ngram）+ Qdrant 语义检索 + 加权 RRF 融合</p>
+</header>
+<div class="wrap">
+
+  <div class="card">
+    <h3>上传资料（文本型 PDF / 扫描 PDF / 图片）</h3>
+    <div class="row">
+      <input type="text" id="course" placeholder="课程名称，例如 数据库系统原理">
+      <input type="file" id="files" multiple accept=".pdf,.png,.jpg,.jpeg,.txt,.md,.bmp,.tif,.tiff">
+      <button id="btnUpload">上传并入库</button>
+      <button class="ghost" id="btnSample">加载演示数据</button>
+    </div>
+    <div class="hint" id="uploadMsg" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input type="text" id="q" placeholder="输入查询，例如：事务的隔离级别 / 2021 线性回归 / 为什么要避免长事务">
+      <button id="btnSearch">检索</button>
+      <button class="ghost" id="btnCompare">两种模式对比</button>
+    </div>
+    <div class="hot" id="hot" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button data-mode="keyword" class="on">① 关键词检索（仅 MySQL）</button>
+      <button data-mode="smart">② 智能检索（MySQL + Qdrant 融合）</button>
+    </div>
+    <div id="meta" class="hint" style="margin-bottom:10px"></div>
+    <div id="results"></div>
+  </div>
+
+  <div class="card" id="compareCard" style="display:none">
+    <h3>模式对比</h3>
+    <div class="grid">
+      <div><h3>关键词检索</h3><div id="cKw"></div></div>
+      <div><h3>智能检索</h3><div id="cSmart"></div></div>
+    </div>
+    <h3 style="margin-top:14px">排名差异</h3>
+    <div id="cDiff"></div>
+  </div>
+
+  <div class="card">
+    <h3>资源库 <span class="hint" id="stat"></span></h3>
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+let mode = 'keyword';
+const $ = s => document.querySelector(s);
+const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function statusTag(st) {
+  if (st === 'error') return '<span class="tag err">解析失败</span>';
+  if (st === 'empty') return '<span class="tag empty">无文本</span>';
+  return '';
+}
+
+function itemHtml(r, i) {
+  const mt = r.match_type;
+  const tag = mt === 'both' ? '<span class="tag both">两路命中</span>'
+    : mt === 'keyword-only' || mt === 'keyword' ? '<span class="tag k">关键词</span>'
+    : mt === 'semantic-only' ? '<span class="tag s">语义</span>' : '';
+  const score = r.score !== undefined ? `<span class="tag">score ${r.score}</span>` : '';
+  const kr = r.keyword_rank ? `<span class="tag">KW#${r.keyword_rank}</span>` : '';
+  const sr = r.semantic_rank ? `<span class="tag">SEM#${r.semantic_rank}</span>` : '';
+  const sem = r.semantic_score != null ? `<span class="tag">cos ${r.semantic_score.toFixed(3)}</span>` : '';
+  const ft = r.ft_score != null && r.semantic_rank === undefined ? `<span class="tag">ft ${(+r.ft_score).toFixed(2)}</span>` : '';
+  return `<div class="item">
+    <div class="t">${i + 1}. ${esc(r.title)} ${statusTag(r.status)}</div>
+    <div class="m">${esc(r.course_name)} · ${esc(r.file_name)} · ${esc(r.source_type)} ${tag}${score}${kr}${sr}${sem}${ft}</div>
+    <div class="s">${esc(r.snippet)}</div>
+  </div>`;
+}
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || '请求失败');
+  return json.data;
+}
+
+async function doSearch() {
+  const q = $('#q').value.trim();
+  if (!q) return;
+  $('#results').innerHTML = '检索中…';
+  try {
+    const data = await api(`/api/search?mode=${mode}&q=${encodeURIComponent(q)}&limit=10`);
+    let meta = `${data.total} 条结果 · ${data.cost_ms} ms · 模式：${data.mode === 'keyword' ? '仅 MySQL' : '融合排序'}`;
+    if (data.fusion) {
+      const w = data.fusion.weights, qa = data.fusion.query_analysis;
+      meta += ` · RRF(k=${data.fusion.rrf_k}) 权重 关键词 ${w.keyword} / 语义 ${w.semantic}` +
+        ` · 查询倾向：${qa.query_type}（精确信号 ${qa.exact_strength} vs 自然语言 ${qa.nl_strength}）` +
+        ` · 候选：关键词 ${data.fusion.candidates.keyword} / 语义 ${data.fusion.candidates.semantic}`;
+    }
+    $('#meta').textContent = meta;
+    $('#results').innerHTML = data.results.length ? data.results.map(itemHtml).join('') : '<div class="hint">没有匹配结果</div>';
+  } catch (e) {
+    $('#results').innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+  }
+  loadHot();
+}
+
+async function doCompare() {
+  const q = $('#q').value.trim();
+  if (!q) return;
+  $('#compareCard').style.display = 'block';
+  try {
+    const d = await api(`/api/search/compare?q=${encodeURIComponent(q)}&limit=10`);
+    $('#cKw').innerHTML = d.keyword.results.map(itemHtml).join('') || '<div class="hint">无结果</div>';
+    $('#cSmart').innerHTML = d.smart.results.map(itemHtml).join('') || '<div class="hint">无结果</div>';
+    $('#cDiff').innerHTML = `<table><tr><th>资源</th><th>关键词排名</th><th>智能排名</th><th>变化</th></tr>` +
+      d.diff.map(r => `<tr><td>${esc(r.title)}</td><td>${r.keyword_rank ?? '-'}</td><td>${r.smart_rank ?? '-'}</td>
+        <td>${r.keyword_rank && r.smart_rank ? (r.rank_delta > 0 ? '↑' + r.rank_delta : r.rank_delta < 0 ? '↓' + (-r.rank_delta) : '—') : (r.smart_rank ? '新增' : '仅关键词')}</td></tr>`).join('') +
+      '</table>';
+    const w = d.smart.fusion.weights;
+    $('#meta').textContent = `对比：${d.query} · 关键词 ${d.keyword.cost_ms}ms / 智能 ${d.smart.cost_ms}ms · 动态权重 关键词 ${w.keyword} / 语义 ${w.semantic}`;
+  } catch (e) {
+    $('#cDiff').innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+  }
+  loadHot();
+}
+
+async function upload() {
+  const files = $('#files').files;
+  if (!files.length) { $('#uploadMsg').textContent = '请选择文件'; return; }
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  fd.append('course', $('#course').value.trim());
+  $('#uploadMsg').textContent = '上传解析中（扫描件 OCR 可能较慢）…';
+  try {
+    const list = await api('/api/resources/upload', { method: 'POST', body: fd });
+    $('#uploadMsg').innerHTML = list.map(r => `${esc(r.title)}：${r.status === 'ok' ? '入库成功' : '入库失败'}，${esc(r.source_type)}，${r.chunk_count} 块，${r.cost_ms}ms ${r.message ? '（' + esc(r.message) + '）' : ''}`).join('<br>');
+  } catch (e) {
+    $('#uploadMsg').textContent = e.message;
+  }
+  loadList(); loadHot();
+}
+
+async function loadSample() {
+  $('#uploadMsg').textContent = '生成并入库演示数据…';
+  try {
+    const list = await api('/api/demo/sample', { method: 'POST' });
+    $('#uploadMsg').innerHTML = list.map(r => `${esc(r.title)}：${r.status}，${esc(r.source_type)}，${r.chunk_count} 块${r.ocr_pages ? '，OCR ' + r.ocr_pages + ' 页' : ''}${r.message ? '（' + esc(r.message) + '）' : ''}`).join('<br>');
+  } catch (e) { $('#uploadMsg').textContent = e.message; }
+  loadList(); loadHot();
+}
+
+async function loadList() {
+  try {
+    const rows = await api('/api/resources');
+    $('#stat').textContent = `共 ${rows.length} 条`;
+    $('#list').innerHTML = `<table><tr><th>ID</th><th>课程</th><th>标题</th><th>类型</th><th>页/OCR</th><th>块</th><th>状态</th><th></th></tr>` +
+      rows.map(r => `<tr><td>${r.id}</td><td>${esc(r.course_name)}</td><td>${esc(r.title)}</td><td>${esc(r.source_type)}</td>
+        <td>${r.page_count}/${r.ocr_pages}</td><td>${r.chunk_count}</td>
+        <td>${r.status}${r.message ? '<span class="hint"> ' + esc(r.message) + '</span>' : ''}</td>
+        <td><button class="ghost" onclick="del(${r.id})">删除</button></td></tr>`).join('') + '</table>';
+  } catch (e) { $('#list').innerHTML = `<div class="hint">${esc(e.message)}</div>`; }
+}
+
+async function del(id) {
+  if (!confirm('删除该资源并同步清理 MySQL 与 Qdrant 索引？')) return;
+  await api(`/api/resources/${id}`, { method: 'DELETE' });
+  loadList();
+}
+
+async function loadHot() {
+  try {
+    const rows = await api('/api/hot?limit=10');
+    $('#hot').innerHTML = rows.length
+      ? '<span class="hint">热词：</span>' + rows.map(r => `<span onclick="document.querySelector('#q').value='${esc(r.query)}';doSearch()">${esc(r.query)} (${r.hits})</span>`).join('')
+      : '';
+  } catch (e) { /* ignore */ }
+}
+
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); mode = b.dataset.mode; doSearch();
+});
+$('#btnSearch').onclick = doSearch;
+$('#btnCompare').onclick = doCompare;
+$('#btnUpload').onclick = upload;
+$('#btnSample').onclick = loadSample;
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+loadList(); loadHot();
+</script>
+</body>
+</html>

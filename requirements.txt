@@ -1,0 +1,21 @@
+# Web 框架
+flask==3.1.2
+
+# MySQL
+pymysql==1.1.1
+cryptography==46.0.3
+
+# OCR / 文件解析
+pypdf==6.1.1              # 纯 Python PDF 文本抽取（主后端）
+pillow>=12.0.0            # Python 3.15 需要 Pillow 12+（旧版本只有源码包）
+pytesseract==0.3.13       # 调用 Tesseract-OCR，需要本机安装 tesseract 并放入 chi_sim 语言包
+pymupdf==1.26.5           # 可选：fitz 渲染扫描页，若被系统策略拦截会自动回退 pypdf
+pypdfium2>=4.30.0         # 可选：pypdf 无渲染能力时的页面渲染兜底
+reportlab==4.4.4          # 仅用于生成演示样例 PDF（demo_data.py）
+
+# 向量检索
+qdrant-client>=1.15.1
+numpy>=2.3.3
+
+# Embedding（阿里云百炼 DashScope 的 OpenAI 兼容接口，可选）
+openai>=1.109.1
